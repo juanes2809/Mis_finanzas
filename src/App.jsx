@@ -25,10 +25,90 @@ const DEFAULT_GOALS = [
   { id: "g1", name: "Flores 💐", emoji: "💐", percentage: 5, period: "weekly", source: "all", color: "#f77f9e" },
   { id: "g2", name: "Ahorro personal", emoji: "🐷", percentage: 15, period: "monthly", source: "all", color: "#52b788" },
 ];
+const DEFAULT_BOLSILLOS = [];
+// { id, name, emoji, color, target, movements: [{id, amount, date, note}] }
+const DEFAULT_CREDITS = [];
+// { id, name, emoji, color, totalAmount, installments, monthlyAmount, startDate, paidCount, bolsilloId }
 
 // ── UTILS ─────────────────────────────────────────────────────────────────────
 const fmt = (n) => new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(n);
 const uid = () => Math.random().toString(36).slice(2);
+
+
+// Generar informe mensual HTML → window.print() → PDF
+function generatePDFReport(txs, cats) {
+  const month = monthPrefix();
+  const monthTxs = txs.filter(t => t.date.startsWith(month));
+  const totalIncome  = monthTxs.filter(t => t.type === "income").reduce((s, t) => s + t.amount, 0);
+  const totalExpense = monthTxs.filter(t => t.type === "expense").reduce((s, t) => s + t.amount, 0);
+  const balance = totalIncome - totalExpense;
+  const fmtCOP = n => new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(n);
+  const monthName = new Date(month + "-15").toLocaleDateString("es", { month: "long", year: "numeric" });
+
+  const expByCat = {};
+  monthTxs.filter(t => t.type === "expense").forEach(t => {
+    expByCat[t.catId] = (expByCat[t.catId] || 0) + t.amount;
+  });
+  const catRows = Object.entries(expByCat)
+    .sort((a, b) => b[1] - a[1])
+    .map(([id, amt]) => {
+      const cat = cats.find(c => c.id === id) || { name: id, icon: "❓" };
+      const pct = totalExpense > 0 ? Math.round(amt / totalExpense * 100) : 0;
+      return `<tr><td>${cat.icon} ${cat.name}</td><td class="right red">${fmtCOP(amt)}</td><td class="right muted">${pct}%</td></tr>`;
+    }).join("") || `<tr><td colspan="3" class="center muted">Sin gastos este mes</td></tr>`;
+
+  const txRows = monthTxs
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .map(t => {
+      const cat = cats.find(c => c.id === t.catId) || { name: "?", icon: "❓" };
+      const color = t.type === "income" ? "green" : "red";
+      const sign  = t.type === "income" ? "+" : "-";
+      return `<tr><td>${t.date}</td><td>${cat.icon} ${cat.name}</td><td class="muted">${t.reason || "—"}</td><td class="right ${color}">${sign}${fmtCOP(t.amount)}</td></tr>`;
+    }).join("") || `<tr><td colspan="4" class="center muted">Sin movimientos</td></tr>`;
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Informe ${monthName} — MisFinanzas</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',Arial,sans-serif;max-width:820px;margin:0 auto;padding:28px;color:#1a1a2e;font-size:14px}
+  h1{font-size:22px;font-weight:800;color:#e07a5f;border-bottom:3px solid #e07a5f;padding-bottom:10px;margin-bottom:18px}
+  h2{font-size:15px;font-weight:700;color:#3d405b;margin:22px 0 10px;padding-bottom:4px;border-bottom:1px solid #eee}
+  .summary{display:flex;gap:14px;margin-bottom:6px}
+  .stat{flex:1;background:#f8f7f4;border-radius:10px;padding:14px;text-align:center}
+  .stat .lbl{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#999;font-weight:600}
+  .stat .val{font-size:20px;font-weight:800;margin-top:5px}
+  table{width:100%;border-collapse:collapse;margin-top:4px}
+  th{background:#f0ece3;padding:8px 10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:#666;font-weight:700}
+  td{padding:8px 10px;border-bottom:1px solid #f5f5f5;font-size:13px}
+  tr:last-child td{border-bottom:none}
+  .right{text-align:right}
+  .center{text-align:center}
+  .muted{color:#999}
+  .green{color:#16a34a;font-weight:700}
+  .red{color:#dc2626;font-weight:700}
+  .blue{color:#2563eb;font-weight:700}
+  footer{margin-top:28px;font-size:11px;color:#bbb;text-align:center}
+  @media print{body{padding:10px}button{display:none!important}}
+</style></head><body>
+<h1>💸 MisFinanzas — ${monthName}</h1>
+<div class="summary">
+  <div class="stat"><div class="lbl">Ingresos</div><div class="val green">${fmtCOP(totalIncome)}</div></div>
+  <div class="stat"><div class="lbl">Gastos</div><div class="val red">${fmtCOP(totalExpense)}</div></div>
+  <div class="stat"><div class="lbl">Balance</div><div class="val ${balance>=0?'green':'red'}">${fmtCOP(balance)}</div></div>
+</div>
+<h2>📊 Gastos por categoría</h2>
+<table><thead><tr><th>Categoría</th><th class="right">Monto</th><th class="right">%</th></tr></thead>
+<tbody>${catRows}</tbody></table>
+<h2>📋 Todos los movimientos</h2>
+<table><thead><tr><th>Fecha</th><th>Categoría</th><th>Descripción</th><th class="right">Monto</th></tr></thead>
+<tbody>${txRows}</tbody></table>
+<footer>Generado por MisFinanzas · ${new Date().toLocaleDateString("es-CO")}</footer>
+<script>window.print();</script>
+</body></html>`;
+
+  const w = window.open("", "_blank");
+  if (w) { w.document.write(html); w.document.close(); }
+}
 
 // ── ZONA HORARIA COLOMBIA (UTC-5) ─────────────────────────────────────────────
 // Evita el bug donde a las 7pm-11pm en Colombia ya es "mañana" en UTC
@@ -300,7 +380,7 @@ function AddTxModal({ cats, onSave, onClose }) {
 }
 
 // ── DASHBOARD TAB ─────────────────────────────────────────────────────────────
-function Dashboard({ txs, cats, goals }) {
+function Dashboard({ txs, cats, goals, bolsillos, credits, onPDF }) {
   const monthTxs = txs.filter(t => t.date.startsWith(monthPrefix()));
   const totalIncome  = monthTxs.filter(t => t.type === "income").reduce((s, t) => s + t.amount, 0);
   const totalExpense = monthTxs.filter(t => t.type === "expense").reduce((s, t) => s + t.amount, 0);
@@ -313,8 +393,8 @@ function Dashboard({ txs, cats, goals }) {
     return { ...g, base, monthlyEquiv };
   });
   const totalReserved = goalsData.reduce((s, g) => s + g.monthlyEquiv, 0);
-  // Disponible = ingresos - gastos (metas son solo referencia visual, no se descuentan)
-  const disponible = totalIncome - totalExpense;
+  // Disponible = ingresos - gastos - metas mensuales
+  const disponible = totalIncome - totalExpense - totalReserved;
 
   const expCats = {};
   monthTxs.filter(t => t.type === "expense").forEach(t => { expCats[t.catId] = (expCats[t.catId] || 0) + t.amount; });
@@ -347,9 +427,12 @@ function Dashboard({ txs, cats, goals }) {
         </div>
         {totalReserved > 0 && (
           <div style={{ fontSize: "12px", color: "rgba(240,236,227,0.4)", marginTop: "4px" }}>
-            metas sugeridas: {fmt(totalReserved)} (solo referencia)
+            {fmt(totalReserved)} apartado en metas
           </div>
         )}
+        <button onClick={onPDF} style={{ marginTop: "10px", padding: "7px 18px", borderRadius: "20px", border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.05)", color: "rgba(240,236,227,0.7)", cursor: "pointer", fontSize: "12px", fontWeight: 600 }}>
+          📄 Informe PDF
+        </button>
       </div>
 
       {/* Desglose: ingresos / gastos / metas */}
@@ -367,6 +450,52 @@ function Dashboard({ txs, cats, goals }) {
           <div style={{ fontSize: "14px", fontWeight: 700, color: "#f2cc8f", marginTop: "4px" }}>{fmt(totalReserved)}</div>
         </div>
       </div>
+
+      {/* Bolsillos overview */}
+      {bolsillos.length > 0 && (
+        <div style={S.card}>
+          <div style={S.sectionTitle}>🫙 Bolsillos</div>
+          {bolsillos.map(b => {
+            const bal = (b.movements || []).reduce((s, m) => s + m.amount, 0);
+            const pct = b.target > 0 ? Math.min(bal / b.target * 100, 100) : null;
+            return (
+              <div key={b.id} style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "10px" }}>
+                <span style={{ fontSize: "22px" }}>{b.emoji}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "3px" }}>
+                    <span style={{ fontSize: "13px", fontWeight: 600 }}>{b.name}</span>
+                    <span style={{ fontSize: "13px", fontWeight: 800, color: b.color }}>{fmt(bal)}</span>
+                  </div>
+                  {pct !== null && (
+                    <div style={{ background: "rgba(255,255,255,0.08)", borderRadius: "3px", height: "4px" }}>
+                      <div style={{ height: "4px", width: `${pct}%`, background: b.color, borderRadius: "3px", transition: "width 0.5s" }} />
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Créditos pendientes */}
+      {credits.filter(c => c.paidCount < c.installments).length > 0 && (
+        <div style={S.card}>
+          <div style={S.sectionTitle}>💳 Cuotas pendientes este mes</div>
+          {credits.filter(c => c.paidCount < c.installments).map(c => (
+            <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <span style={{ fontSize: "18px" }}>{c.emoji}</span>
+                <div>
+                  <div style={{ fontSize: "13px", fontWeight: 600 }}>{c.name}</div>
+                  <div style={{ fontSize: "11px", color: "rgba(240,236,227,0.4)" }}>cuota {c.paidCount + 1}/{c.installments}</div>
+                </div>
+              </div>
+              <span style={{ fontSize: "14px", fontWeight: 700, color: c.color }}>{fmt(c.monthlyAmount)}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Metas con barra visual */}
       {goals.length > 0 && (
@@ -765,6 +894,221 @@ function Goals({ goals, cats, txs, onSave, onDelete }) {
   );
 }
 
+// ── BOLSILLOS TAB ─────────────────────────────────────────────────────────────
+function BolsillosTab({ bolsillos, onSave, onDelete, onMovement }) {
+  const [form, setForm] = useState(null);
+  const [moveTarget, setMoveTarget] = useState(null);
+  const [moveAmt, setMoveAmt] = useState("");
+  const [moveNote, setMoveNote] = useState("");
+  const BCOLORS = ["#4361ee","#7b2fff","#52b788","#e07a5f","#f2cc8f","#f77f9e","#00b4d8","#ff9f43"];
+  const F = form || { name: "", emoji: "🫙", color: BCOLORS[0], target: "" };
+  const saveBolsillo = () => {
+    if (!F.name) return alert("Ponle nombre al bolsillo");
+    onSave({ ...F, id: F.id || uid(), target: F.target ? +F.target : 0, movements: F.movements || [] });
+    setForm(null);
+  };
+  const doMove = (b) => {
+    if (!moveAmt || +moveAmt <= 0) return alert("Ingresa un monto válido");
+    const amount = moveTarget.type === "add" ? +moveAmt : -Math.abs(+moveAmt);
+    onMovement(b.id, { id: uid(), amount, date: today(), note: moveNote });
+    setMoveTarget(null); setMoveAmt(""); setMoveNote("");
+  };
+  return (
+    <div style={S.page}>
+      <button style={{ ...S.btn("#4361ee", "#fff") }} onClick={() => setForm({})}>+ Nuevo bolsillo</button>
+      {form !== null && (
+        <div style={{ ...S.card, marginTop: "14px" }}>
+          <div style={S.sectionTitle}>{F.id ? "Editar" : "Nuevo"} bolsillo</div>
+          <div style={S.formGrid}>
+            <div><label style={S.label}>Nombre</label><input style={S.input} value={F.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="ej: Viaje" /></div>
+            <EmojiPicker label="Emoji" value={F.emoji} onChange={v => setForm(p => ({ ...p, emoji: v }))} />
+          </div>
+          <div style={{ marginTop: "10px" }}>
+            <label style={S.label}>Meta de ahorro (opcional)</label>
+            <input style={S.input} type="number" placeholder="¿Cuánto quieres juntar?" value={F.target} onChange={e => setForm(p => ({ ...p, target: e.target.value }))} />
+          </div>
+          <div style={{ marginTop: "10px" }}>
+            <label style={S.label}>Color</label>
+            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+              {BCOLORS.map(c => <div key={c} onClick={() => setForm(p => ({ ...p, color: c }))} style={{ width: "28px", height: "28px", borderRadius: "8px", background: c, cursor: "pointer", border: F.color === c ? "3px solid white" : "3px solid transparent", boxShadow: F.color === c ? `0 0 8px ${c}` : "none", transition: "all 0.15s" }} />)}
+            </div>
+          </div>
+          <div style={S.formGrid}>
+            <button style={{ ...S.btn("#4361ee", "#fff"), marginTop: "10px" }} onClick={saveBolsillo}>Guardar</button>
+            <button style={{ ...S.btn("rgba(255,255,255,0.08)", "#f0ece3"), marginTop: "10px" }} onClick={() => setForm(null)}>Cancelar</button>
+          </div>
+        </div>
+      )}
+      {bolsillos.length === 0 && !form && <div style={{ textAlign: "center", color: "rgba(240,236,227,0.3)", padding: "40px 0", fontSize: "14px" }}>Sin bolsillos aún 🫙<br /><span style={{ fontSize: "12px" }}>Crea uno para apartar dinero manualmente</span></div>}
+      {bolsillos.map(b => {
+        const balance = (b.movements || []).reduce((s, m) => s + m.amount, 0);
+        const pct = b.target > 0 ? Math.min(balance / b.target * 100, 100) : 0;
+        const isMoving = moveTarget?.bolsilloId === b.id;
+        return (
+          <div key={b.id} style={{ ...S.card, border: `1px solid ${b.color}44` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <span style={{ fontSize: "32px" }}>{b.emoji}</span>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: "16px" }}>{b.name}</div>
+                  {b.target > 0 && <div style={{ fontSize: "11px", color: "rgba(240,236,227,0.4)" }}>meta: {fmt(b.target)}</div>}
+                </div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: "24px", fontWeight: 800, color: b.color }}>{fmt(balance)}</div>
+                <div style={{ fontSize: "11px", color: "rgba(240,236,227,0.4)" }}>disponible</div>
+              </div>
+            </div>
+            {b.target > 0 && (
+              <div style={{ marginTop: "10px" }}>
+                <div style={{ background: "rgba(255,255,255,0.08)", borderRadius: "4px", height: "7px", overflow: "hidden" }}>
+                  <div style={{ height: "7px", width: `${pct}%`, background: `linear-gradient(90deg, ${b.color}, ${b.color}cc)`, borderRadius: "4px", transition: "width 0.5s" }} />
+                </div>
+                <div style={{ fontSize: "11px", color: "rgba(240,236,227,0.4)", marginTop: "3px" }}>{pct.toFixed(0)}% de la meta · quedan {fmt(Math.max(b.target - balance, 0))}</div>
+              </div>
+            )}
+            {isMoving && (
+              <div style={{ marginTop: "12px", padding: "12px", background: "rgba(255,255,255,0.04)", borderRadius: "10px" }}>
+                <div style={{ fontSize: "12px", fontWeight: 700, color: moveTarget.type === "add" ? "#52b788" : "#e07a5f", marginBottom: "8px" }}>
+                  {moveTarget.type === "add" ? "➕ Agregar al bolsillo" : "➖ Retirar del bolsillo"}
+                </div>
+                <input style={{ ...S.input, marginBottom: "8px" }} type="number" placeholder="Monto" value={moveAmt} onChange={e => setMoveAmt(e.target.value)} />
+                <div style={{ display: "flex", gap: "5px", marginBottom: "8px" }}>
+                  {[5000,10000,20000,50000,100000].map(v => <button key={v} type="button" onClick={() => setMoveAmt(String(v))} style={{ ...S.btnSm(moveAmt == v ? "#f2cc8f" : "rgba(255,255,255,0.08)", moveAmt == v ? "#1a1a2e" : "#f0ece3"), flex: "1" }}>{v/1000}k</button>)}
+                </div>
+                <input style={{ ...S.input, marginBottom: "8px" }} placeholder="Nota (opcional)" value={moveNote} onChange={e => setMoveNote(e.target.value)} />
+                <div style={{ display: "flex", gap: "6px" }}>
+                  <button style={{ ...S.btn(moveTarget.type === "add" ? "#52b788" : "#e07a5f"), marginTop: 0, flex: 1 }} onClick={() => doMove(b)}>Confirmar</button>
+                  <button style={{ ...S.btn("rgba(255,255,255,0.08)", "#f0ece3"), marginTop: 0, flex: 1 }} onClick={() => { setMoveTarget(null); setMoveAmt(""); setMoveNote(""); }}>Cancelar</button>
+                </div>
+              </div>
+            )}
+            {!isMoving && (
+              <div style={{ display: "flex", gap: "6px", marginTop: "12px" }}>
+                <button style={{ ...S.btnSm("#52b78822", "#52b788"), flex: 1 }} onClick={() => setMoveTarget({ bolsilloId: b.id, type: "add" })}>➕ Agregar</button>
+                <button style={{ ...S.btnSm("#e07a5f22", "#e07a5f"), flex: 1 }} onClick={() => setMoveTarget({ bolsilloId: b.id, type: "withdraw" })}>➖ Retirar</button>
+                <button style={S.btnSm("#f2cc8f22", "#f2cc8f")} onClick={() => setForm(b)}>✏️</button>
+                <button style={S.btnSm("#e07a5f22", "#e07a5f")} onClick={() => onDelete(b.id)}>🗑️</button>
+              </div>
+            )}
+            {(b.movements || []).length > 0 && (
+              <div style={{ marginTop: "10px", borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: "10px" }}>
+                <div style={{ fontSize: "11px", color: "rgba(240,236,227,0.4)", marginBottom: "6px", fontWeight: 600 }}>MOVIMIENTOS RECIENTES</div>
+                {[...(b.movements || [])].reverse().slice(0, 4).map(m => (
+                  <div key={m.id} style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
+                    <div><span style={{ fontSize: "12px", color: "rgba(240,236,227,0.6)" }}>{m.note || (m.amount > 0 ? "Depósito" : "Retiro")}</span><span style={{ fontSize: "11px", color: "rgba(240,236,227,0.3)", marginLeft: "6px" }}>{m.date}</span></div>
+                    <span style={{ fontSize: "12px", fontWeight: 700, color: m.amount > 0 ? "#52b788" : "#e07a5f" }}>{m.amount > 0 ? "+" : ""}{fmt(m.amount)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── CREDITS TAB ───────────────────────────────────────────────────────────────
+function CreditsTab({ credits, bolsillos, onSave, onDelete, onPayInstallment }) {
+  const [form, setForm] = useState(null);
+  const CCOLORS = ["#e07a5f","#f77f9e","#4361ee","#52b788","#f2cc8f","#c77dff"];
+  const F = form || { name: "", emoji: "💳", color: CCOLORS[0], totalAmount: "", installments: "12", monthlyAmount: "", startDate: monthPrefix() + "-01", bolsilloId: "" };
+  const saveCredit = () => {
+    if (!F.name || !F.totalAmount) return alert("Nombre y monto total son obligatorios");
+    const monthly = F.monthlyAmount ? +F.monthlyAmount : Math.ceil(+F.totalAmount / +F.installments);
+    onSave({ ...F, id: F.id || uid(), totalAmount: +F.totalAmount, installments: +F.installments, monthlyAmount: monthly, paidCount: F.paidCount || 0 });
+    setForm(null);
+  };
+  const totalPending = credits.filter(c => c.paidCount < c.installments).reduce((s, c) => s + c.monthlyAmount, 0);
+  return (
+    <div style={S.page}>
+      {totalPending > 0 && (
+        <div style={{ ...S.statCard("#e07a5f"), marginBottom: "14px", textAlign: "center" }}>
+          <div style={S.statLabel}>Total cuotas activas / mes</div>
+          <div style={{ fontSize: "28px", fontWeight: 800, color: "#e07a5f", marginTop: "4px" }}>{fmt(totalPending)}</div>
+        </div>
+      )}
+      <button style={S.btn("#e07a5f", "#fff")} onClick={() => setForm({})}>+ Nuevo crédito / cuota</button>
+      {form !== null && (
+        <div style={{ ...S.card, marginTop: "14px" }}>
+          <div style={S.sectionTitle}>{F.id ? "Editar" : "Nuevo"} crédito</div>
+          <div style={S.formGrid}>
+            <div><label style={S.label}>Descripción</label><input style={S.input} value={F.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="ej: TV Samsung" /></div>
+            <EmojiPicker label="Emoji" value={F.emoji} onChange={v => setForm(p => ({ ...p, emoji: v }))} />
+          </div>
+          <div style={S.formGrid}>
+            <div><label style={S.label}>Monto total</label><input style={S.input} type="number" placeholder="0" value={F.totalAmount} onChange={e => setForm(p => ({ ...p, totalAmount: e.target.value }))} /></div>
+            <div><label style={S.label}>N° cuotas</label><input style={S.input} type="number" min="1" value={F.installments} onChange={e => setForm(p => ({ ...p, installments: e.target.value }))} /></div>
+          </div>
+          <div style={S.formGrid}>
+            <div><label style={S.label}>Cuota mensual (o auto)</label><input style={S.input} type="number" placeholder={F.totalAmount && F.installments ? fmt(Math.ceil(+F.totalAmount / +F.installments)) : "Auto"} value={F.monthlyAmount} onChange={e => setForm(p => ({ ...p, monthlyAmount: e.target.value }))} /></div>
+            <div><label style={S.label}>Primer pago (mes)</label><input style={S.input} type="month" value={F.startDate?.slice(0,7) || monthPrefix()} onChange={e => setForm(p => ({ ...p, startDate: e.target.value + "-01" }))} /></div>
+          </div>
+          <div style={{ marginTop: "10px" }}>
+            <label style={S.label}>Pagar desde bolsillo (opcional)</label>
+            <select style={S.select} value={F.bolsilloId} onChange={e => setForm(p => ({ ...p, bolsilloId: e.target.value }))}>
+              <option value="">Sin bolsillo asignado</option>
+              {bolsillos.map(b => { const bal = (b.movements || []).reduce((s, m) => s + m.amount, 0); return <option key={b.id} value={b.id}>{b.emoji} {b.name} ({fmt(bal)})</option>; })}
+            </select>
+          </div>
+          <div style={{ marginTop: "10px" }}>
+            <label style={S.label}>Color</label>
+            <div style={{ display: "flex", gap: "6px" }}>
+              {CCOLORS.map(c => <div key={c} onClick={() => setForm(p => ({ ...p, color: c }))} style={{ width: "28px", height: "28px", borderRadius: "8px", background: c, cursor: "pointer", border: F.color === c ? "3px solid white" : "3px solid transparent" }} />)}
+            </div>
+          </div>
+          <div style={S.formGrid}>
+            <button style={{ ...S.btn("#e07a5f", "#fff"), marginTop: "10px" }} onClick={saveCredit}>Guardar</button>
+            <button style={{ ...S.btn("rgba(255,255,255,0.08)", "#f0ece3"), marginTop: "10px" }} onClick={() => setForm(null)}>Cancelar</button>
+          </div>
+        </div>
+      )}
+      {credits.length === 0 && !form && <div style={{ textAlign: "center", color: "rgba(240,236,227,0.3)", padding: "40px 0", fontSize: "14px" }}>Sin créditos registrados 💳<br /><span style={{ fontSize: "12px" }}>Agrega compras a cuotas para llevar el control</span></div>}
+      {credits.map(c => {
+        const remaining = c.installments - c.paidCount;
+        const pct = c.installments > 0 ? (c.paidCount / c.installments * 100) : 0;
+        const linked = bolsillos.find(b => b.id === c.bolsilloId);
+        const bolBal = linked ? (linked.movements || []).reduce((s, m) => s + m.amount, 0) : 0;
+        return (
+          <div key={c.id} style={{ ...S.card, border: `1px solid ${c.color}44` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                <span style={{ fontSize: "28px" }}>{c.emoji}</span>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: "15px" }}>{c.name}</div>
+                  <div style={{ fontSize: "11px", color: "rgba(240,236,227,0.4)", marginTop: "2px" }}>{c.paidCount}/{c.installments} cuotas · {fmt(c.monthlyAmount)}/mes</div>
+                  {linked && <div style={{ fontSize: "11px", color: linked.color || "#4361ee", marginTop: "2px" }}>{linked.emoji} {linked.name} · saldo {fmt(bolBal)}</div>}
+                </div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                {remaining > 0
+                  ? <><div style={{ fontSize: "18px", fontWeight: 800, color: c.color }}>{fmt(remaining * c.monthlyAmount)}</div><div style={{ fontSize: "11px", color: "rgba(240,236,227,0.4)" }}>por pagar</div></>
+                  : <div style={{ fontSize: "14px", fontWeight: 700, color: "#52b788" }}>✅ Pagado</div>}
+              </div>
+            </div>
+            <div style={{ marginTop: "10px" }}>
+              <div style={{ background: "rgba(255,255,255,0.08)", borderRadius: "4px", height: "7px", overflow: "hidden" }}>
+                <div style={{ height: "7px", width: `${pct}%`, background: `linear-gradient(90deg, ${c.color}, ${c.color}cc)`, borderRadius: "4px", transition: "width 0.5s" }} />
+              </div>
+              <div style={{ fontSize: "11px", color: "rgba(240,236,227,0.4)", marginTop: "3px" }}>{pct.toFixed(0)}% pagado · {fmt(c.paidCount * c.monthlyAmount)} pagado</div>
+            </div>
+            <div style={{ display: "flex", gap: "6px", marginTop: "12px" }}>
+              {remaining > 0 && (
+                <button style={{ ...S.btnSm("#52b78822", "#52b788"), flex: 1 }} onClick={() => onPayInstallment(c.id)}>
+                  ✅ Pagar cuota {c.paidCount + 1}{linked ? ` (de ${linked.emoji} ${linked.name})` : ""}
+                </button>
+              )}
+              <button style={S.btnSm("#f2cc8f22", "#f2cc8f")} onClick={() => setForm(c)}>✏️</button>
+              <button style={S.btnSm("#e07a5f22", "#e07a5f")} onClick={() => onDelete(c.id)}>🗑️</button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── CATEGORIES TAB ────────────────────────────────────────────────────────────
 function Categories({ cats, onSave, onDelete }) {
   const [form, setForm] = useState(null);
@@ -840,11 +1184,15 @@ export default function App() {
   const [txs, setTxs] = useState(() => load("txs") || []);
   const [cats, setCats] = useState(() => load("cats") || DEFAULT_CATS);
   const [goals, setGoals] = useState(() => load("goals") || DEFAULT_GOALS);
+  const [bolsillos, setBolsillos] = useState(() => load("bolsillos") || DEFAULT_BOLSILLOS);
+  const [credits, setCredits] = useState(() => load("credits") || DEFAULT_CREDITS);
   const [showAdd, setShowAdd] = useState(false);
 
   const saveTxs = useCallback((next) => { setTxs(next); save("txs", next); }, []);
   const saveCats = useCallback((next) => { setCats(next); save("cats", next); }, []);
   const saveGoals = useCallback((next) => { setGoals(next); save("goals", next); }, []);
+  const saveBolsillos = useCallback((next) => { setBolsillos(next); save("bolsillos", next); }, []);
+  const saveCredits = useCallback((next) => { setCredits(next); save("credits", next); }, []);
 
   const addTx = (tx) => saveTxs([tx, ...txs]);
   const delTx = (id) => saveTxs(txs.filter(t => t.id !== id));
@@ -852,12 +1200,28 @@ export default function App() {
   const delCat = (id) => saveCats(cats.filter(c => c.id !== id));
   const upsertGoal = (g) => saveGoals(goals.some(x => x.id === g.id) ? goals.map(x => x.id === g.id ? g : x) : [...goals, g]);
   const delGoal = (id) => saveGoals(goals.filter(g => g.id !== id));
+  const upsertBolsillo = (b) => saveBolsillos(bolsillos.some(x => x.id === b.id) ? bolsillos.map(x => x.id === b.id ? b : x) : [...bolsillos, b]);
+  const delBolsillo = (id) => saveBolsillos(bolsillos.filter(b => b.id !== id));
+  const addBolsilloMovement = (bolsilloId, movement) => saveBolsillos(bolsillos.map(b => b.id === bolsilloId ? { ...b, movements: [...(b.movements || []), movement] } : b));
+  const upsertCredit = (c) => saveCredits(credits.some(x => x.id === c.id) ? credits.map(x => x.id === c.id ? c : x) : [...credits, c]);
+  const delCredit = (id) => saveCredits(credits.filter(c => c.id !== id));
+  const payInstallment = (creditId) => {
+    const credit = credits.find(c => c.id === creditId);
+    if (!credit || credit.paidCount >= credit.installments) return;
+    const updated = { ...credit, paidCount: credit.paidCount + 1 };
+    saveCredits(credits.map(c => c.id === creditId ? updated : c));
+    if (credit.bolsilloId) {
+      addBolsilloMovement(credit.bolsilloId, { id: uid(), amount: -credit.monthlyAmount, date: today(), note: `Cuota ${credit.paidCount + 1} — ${credit.name}` });
+    }
+  };
 
   const TABS = [
     { id: "dashboard", label: "📊 Inicio" },
     { id: "transactions", label: "💳 Movimientos" },
     { id: "stats", label: "📈 Semana" },
     { id: "goals", label: "🎯 Metas" },
+    { id: "bolsillos", label: "🫙 Bolsillos" },
+    { id: "credits", label: "💳 Créditos" },
     { id: "categories", label: "🏷️ Categorías" },
   ];
 
@@ -873,14 +1237,15 @@ export default function App() {
           {TABS.map(t => <button key={t.id} style={S.tab(tab === t.id)} onClick={() => setTab(t.id)}>{t.label}</button>)}
         </div>
       </div>
-      {tab === "dashboard" && <Dashboard txs={txs} cats={cats} goals={goals} />}
+      {tab === "dashboard" && <Dashboard txs={txs} cats={cats} goals={goals} bolsillos={bolsillos} credits={credits} onPDF={() => generatePDFReport(txs, cats)} />}
       {tab === "transactions" && <Transactions txs={txs} cats={cats} onDelete={delTx} />}
       {tab === "stats" && <WeekStats txs={txs} cats={cats} />}
       {tab === "goals" && <Goals goals={goals} cats={cats} txs={txs} onSave={upsertGoal} onDelete={delGoal} />}
+      {tab === "bolsillos" && <BolsillosTab bolsillos={bolsillos} onSave={upsertBolsillo} onDelete={delBolsillo} onMovement={addBolsilloMovement} />}
+      {tab === "credits" && <CreditsTab credits={credits} bolsillos={bolsillos} onSave={upsertCredit} onDelete={delCredit} onPayInstallment={payInstallment} />}
       {tab === "categories" && <Categories cats={cats} onSave={upsertCat} onDelete={delCat} />}
       <Fab onClick={() => setShowAdd(true)} />
       {showAdd && <AddTxModal cats={cats} onSave={addTx} onClose={() => setShowAdd(false)} />}
     </div>
   );
 }
-
