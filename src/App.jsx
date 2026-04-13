@@ -184,6 +184,46 @@ function Fab({ onClick }) {
   );
 }
 
+// ── EMOJI PICKER ─────────────────────────────────────────────────────────────
+const EMOJI_LIST = [
+  "🎯","💰","🐷","🏦","💎","✈️","🏠","🚗","📱","💻",
+  "🎓","👗","💐","🍕","🎮","🏋️","🎵","📚","🌴","🎁",
+  "💊","⚡","🌟","🔥","💡","🎨","🍷","☕","🧳","🛍️",
+  "🏖️","🍔","🚀","💪","🎬","🐶","🌸","🏆","🌮","🍣",
+  "💼","🎸","🏄","🧘","🎲","🎉","🥗","🍰","🧁","🐱",
+  "🌻","🦋","🎃","🎄","🎀","🧡","💛","💚","💙","💜",
+];
+
+function EmojiPicker({ value, onChange, label }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ position: "relative" }}>
+      {label && <label style={S.label}>{label}</label>}
+      <button type="button" onClick={() => setOpen(o => !o)}
+        style={{ ...S.input, cursor: "pointer", textAlign: "center", fontSize: "22px", padding: "8px", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}>
+        <span>{value || "📌"}</span>
+        <span style={{ fontSize: "10px", color: "rgba(240,236,227,0.4)" }}>▾</span>
+      </button>
+      {open && (
+        <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 300,
+          background: "#1a1a2e", border: "1px solid rgba(255,255,255,0.15)",
+          borderRadius: "14px", padding: "12px", display: "grid",
+          gridTemplateColumns: "repeat(8, 1fr)", gap: "4px",
+          width: "256px", boxShadow: "0 12px 40px rgba(0,0,0,0.6)" }}>
+          {EMOJI_LIST.map(e => (
+            <button key={e} type="button" onClick={() => { onChange(e); setOpen(false); }}
+              style={{ background: value === e ? "rgba(242,204,143,0.2)" : "none",
+                border: "none", cursor: "pointer", fontSize: "20px",
+                padding: "5px", borderRadius: "7px", lineHeight: 1 }}>
+              {e}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── ADD TRANSACTION MODAL ─────────────────────────────────────────────────────
 function AddTxModal({ cats, onSave, onClose }) {
   const [type, setType] = useState("expense");
@@ -215,18 +255,36 @@ function AddTxModal({ cats, onSave, onClose }) {
           <div>
             <label style={S.label}>Monto ($)</label>
             <input style={S.input} type="number" placeholder="0" value={amount} onChange={e => setAmount(e.target.value)} />
+            <div style={{ display: "flex", gap: "5px", flexWrap: "wrap", marginTop: "6px" }}>
+              {[5000,10000,20000,50000,100000].map(v => (
+                <button key={v} type="button" onClick={() => setAmount(String(v))}
+                  style={{ ...S.btnSm(amount == v ? "#f2cc8f" : "rgba(255,255,255,0.08)", amount == v ? "#1a1a2e" : "#f0ece3"),
+                    flex: "1", minWidth: "0" }}>
+                  {v >= 1000 ? `${v/1000}k` : v}
+                </button>
+              ))}
+            </div>
           </div>
           <div>
             <label style={S.label}>Fecha</label>
             <input style={S.input} type="date" value={date} onChange={e => setDate(e.target.value)} />
           </div>
         </div>
-        <div style={{ marginTop: "10px" }}>
+        <div style={{ marginTop: "12px" }}>
           <label style={S.label}>Categoría</label>
-          <select style={S.select} value={catId} onChange={e => setCatId(e.target.value)}>
-            <option value="">Selecciona...</option>
-            {filteredCats.map(c => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
-          </select>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "6px", marginTop: "4px" }}>
+            {filteredCats.map(c => (
+              <button key={c.id} type="button" onClick={() => setCatId(c.id)}
+                style={{ background: catId === c.id ? `${c.color}33` : "rgba(255,255,255,0.05)",
+                  border: `2px solid ${catId === c.id ? c.color : "rgba(255,255,255,0.1)"}`,
+                  borderRadius: "10px", padding: "8px 4px", cursor: "pointer",
+                  display: "flex", flexDirection: "column", alignItems: "center", gap: "3px" }}>
+                <span style={{ fontSize: "20px" }}>{c.icon}</span>
+                <span style={{ fontSize: "10px", color: catId === c.id ? c.color : "rgba(240,236,227,0.6)",
+                  fontWeight: 600, textAlign: "center", lineHeight: 1.2 }}>{c.name}</span>
+              </button>
+            ))}
+          </div>
         </div>
         <div style={{ marginTop: "10px" }}>
           <label style={S.label}>Motivo / Descripción</label>
@@ -247,20 +305,16 @@ function Dashboard({ txs, cats, goals }) {
   const totalIncome  = monthTxs.filter(t => t.type === "income").reduce((s, t) => s + t.amount, 0);
   const totalExpense = monthTxs.filter(t => t.type === "expense").reduce((s, t) => s + t.amount, 0);
 
-  // Calcular total apartado en metas (mensual) — se descuenta del disponible
+  // Metas — solo informativas, no se descuentan del disponible
   const goalsData = goals.map(g => {
     const base = g.source === "all" ? totalIncome
       : monthTxs.filter(t => t.type === "income" && t.catId === g.source).reduce((s, t) => s + t.amount, 0);
-    // Para metas semanales, multiplicar por semanas del mes (~4.33); diario por ~30
-    const multiplier = g.period === "weekly" ? 4.33 : g.period === "daily" ? 30 : 1;
-    const target = base * (g.percentage / 100) * (g.period === "monthly" ? 1 : 0);
-    // Solo descontamos metas mensuales directo; semanales/diarias se muestran como referencia
     const monthlyEquiv = g.period === "monthly" ? base * (g.percentage / 100) : 0;
     return { ...g, base, monthlyEquiv };
   });
   const totalReserved = goalsData.reduce((s, g) => s + g.monthlyEquiv, 0);
-  // Disponible real = ingresos - gastos - lo apartado en metas
-  const disponible = totalIncome - totalExpense - totalReserved;
+  // Disponible = ingresos - gastos (metas son solo referencia visual, no se descuentan)
+  const disponible = totalIncome - totalExpense;
 
   const expCats = {};
   monthTxs.filter(t => t.type === "expense").forEach(t => { expCats[t.catId] = (expCats[t.catId] || 0) + t.amount; });
@@ -286,14 +340,14 @@ function Dashboard({ txs, cats, goals }) {
       {/* DISPONIBLE REAL — número principal */}
       <div style={{ textAlign: "center", padding: "20px 0 8px" }}>
         <div style={{ fontSize: "12px", color: "rgba(240,236,227,0.5)", textTransform: "uppercase", letterSpacing: "1px" }}>
-          💵 Disponible real este mes
+          💵 Disponible este mes
         </div>
         <div style={{ fontSize: "40px", fontWeight: 800, marginTop: "6px", color: disponible >= 0 ? "#52b788" : "#e07a5f" }}>
           {fmt(disponible)}
         </div>
         {totalReserved > 0 && (
           <div style={{ fontSize: "12px", color: "rgba(240,236,227,0.4)", marginTop: "4px" }}>
-            ya descontando {fmt(totalReserved)} de tus metas
+            metas sugeridas: {fmt(totalReserved)} (solo referencia)
           </div>
         )}
       </div>
@@ -480,7 +534,7 @@ const CUSTOM_LABEL = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }) =
 
 function WeekStats({ txs, cats }) {
   const [weekOffset, setWeekOffset] = useState(0);
-  const { monday, sunday } = getWeekRange(weekOffset);
+  const { monday, sunday, mondayStr, sundayStr } = getWeekRange(weekOffset);
   const weekTxs = txs.filter(t => inRange(t.date, mondayStr, sundayStr));
   const totalIncome = weekTxs.filter(t => t.type === "income").reduce((s, t) => s + t.amount, 0);
   const totalExpense = weekTxs.filter(t => t.type === "expense").reduce((s, t) => s + t.amount, 0);
@@ -648,8 +702,8 @@ function Goals({ goals, cats, txs, onSave, onDelete }) {
         <div style={{ ...S.card, marginTop: "14px" }}>
           <div style={S.sectionTitle}>{F.id ? "Editar" : "Nueva"} meta</div>
           <div style={S.formGrid}>
-            <div><label style={S.label}>Nombre</label><input style={S.input} value={F.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="ej: Flores 💐" /></div>
-            <div><label style={S.label}>Emoji</label><input style={S.input} value={F.emoji} onChange={e => setForm(p => ({ ...p, emoji: e.target.value }))} /></div>
+            <div><label style={S.label}>Nombre</label><input style={S.input} value={F.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="ej: Flores" /></div>
+            <EmojiPicker label="Emoji" value={F.emoji} onChange={v => setForm(p => ({ ...p, emoji: v }))} />
           </div>
           <div style={{ marginTop: "10px" }}>
             <label style={S.label}>% de ingresos: <strong style={{ color: "#f2cc8f" }}>{F.percentage}%</strong></label>
@@ -714,7 +768,12 @@ function Goals({ goals, cats, txs, onSave, onDelete }) {
 // ── CATEGORIES TAB ────────────────────────────────────────────────────────────
 function Categories({ cats, onSave, onDelete }) {
   const [form, setForm] = useState(null);
-  const COLORS = ["#e07a5f","#3d405b","#81b29a","#f2cc8f","#a8dadc","#c77dff","#52b788","#74c69d","#f77f9e","#ffd166"];
+  const COLORS = [
+    "#e07a5f","#f77f9e","#ffd166","#f2cc8f","#ff9f43",
+    "#52b788","#81b29a","#74c69d","#a8dadc","#00b4d8",
+    "#3d405b","#c77dff","#7b2fff","#4361ee","#3a0ca3",
+    "#888","#aaa","#ccc","#ffffff","#1a1a2e",
+  ];
   const F = form || { name: "", icon: "📌", color: COLORS[0], type: "expense" };
   const saveCat = () => {
     if (!F.name) return alert("Ponle nombre");
@@ -738,7 +797,7 @@ function Categories({ cats, onSave, onDelete }) {
           <div style={S.sectionTitle}>{F.id ? "Editar" : "Nueva"} categoría</div>
           <div style={S.formGrid}>
             <div><label style={S.label}>Nombre</label><input style={S.input} value={F.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="ej: Flores" /></div>
-            <div><label style={S.label}>Emoji</label><input style={S.input} value={F.icon} onChange={e => setForm(p => ({ ...p, icon: e.target.value }))} /></div>
+            <EmojiPicker label="Emoji" value={F.icon} onChange={v => setForm(p => ({ ...p, icon: v }))} />
           </div>
           <div style={{ marginTop: "10px" }}>
             <label style={S.label}>Tipo</label>
@@ -752,7 +811,10 @@ function Categories({ cats, onSave, onDelete }) {
             <label style={S.label}>Color</label>
             <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
               {COLORS.map(c => (
-                <div key={c} onClick={() => setForm(p => ({ ...p, color: c }))} style={{ width: "26px", height: "26px", borderRadius: "50%", background: c, cursor: "pointer", border: F.color === c ? "3px solid white" : "3px solid transparent" }} />
+                <div key={c} onClick={() => setForm(p => ({ ...p, color: c }))}
+                  style={{ width: "28px", height: "28px", borderRadius: "8px", background: c, cursor: "pointer",
+                    border: F.color === c ? "3px solid white" : "3px solid transparent",
+                    boxShadow: F.color === c ? `0 0 8px ${c}` : "none", transition: "all 0.15s" }} />
               ))}
             </div>
           </div>
@@ -821,3 +883,4 @@ export default function App() {
     </div>
   );
 }
+
